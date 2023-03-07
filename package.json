@@ -7,10 +7,13 @@
     "start": "astro dev",
     "build": "astro build",
     "build:vercel": "OUTPUT=vercel astro build",
+    "build:deno": "OUTPUT=deno astro build",
     "preview": "astro preview",
+    "preview:deno": "deno run --allow-net --allow-read --allow-env ./dist/server/entry.mjs",
     "astro": "astro"
   },
   "dependencies": {
+    "@astrojs/deno": "^4.0.2",
     "@astrojs/node": "^5.0.4",
     "@astrojs/solid-js": "^2.0.2",
     "@astrojs/vercel": "^3.1.3",

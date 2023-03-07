@@ -5,6 +5,7 @@ import presetAttributify from '@unocss/preset-attributify'
 import presetTypography from '@unocss/preset-typography'
 import solidJs from '@astrojs/solid-js'
 import vercelDisableBlocks from './plugins/vercelDisableBlocks'
+import deno from '@astrojs/deno';
 
 import node from '@astrojs/node'
 import vercel from '@astrojs/vercel/edge'
@@ -12,6 +13,8 @@ import vercel from '@astrojs/vercel/edge'
 const envAdapter = () => {
   if (process.env.OUTPUT == 'vercel') {
     return vercel()
+  } else if (process.env.OUTPUT == 'deno') {
+    return deno()
   } else {
     return node({
       mode: 'standalone'
