@@ -1,8 +1,11 @@
 import { defineConfig } from 'astro/config'
-import unocss from 'unocss/astro'
-import { presetUno } from 'unocss'
-import presetAttributify from '@unocss/preset-attributify'
-import presetTypography from '@unocss/preset-typography'
+import unocss from "unocss/astro"
+import {
+  presetUno,
+  presetIcons,
+  presetAttributify,
+  presetTypography
+} from "unocss"
 import solidJs from '@astrojs/solid-js'
 import vercelDisableBlocks from './plugins/vercelDisableBlocks'
 import deno from '@astrojs/deno';
@@ -30,6 +33,7 @@ export default defineConfig({
         presetAttributify(),
         presetUno(),
         presetTypography(),
+        presetIcons()
       ]
     }),
     solidJs()

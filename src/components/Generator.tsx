@@ -1,225 +1,312 @@
-import type { ChatMessage } from '@/types'
-import { createSignal, Index, Show } from 'solid-js'
-import IconClear from './icons/Clear'
-import MessageItem from './MessageItem'
-import SystemRoleSettings from './SystemRoleSettings'
-import _ from 'lodash'
-import { generateSignature } from '@/utils/auth'
+import { createEffect, createSignal, For, onMount, Show } from "solid-js"
+import { createResizeObserver } from "@solid-primitives/resize-observer"
+import MessageItem from "./MessageItem"
+import type { ChatMessage } from "~/types"
+import Setting from "./Setting"
+import PromptList from "./PromptList"
+import prompts from "~/prompts"
+import { Fzf } from "fzf"
+import { defaultMessage, defaultSetting } from "~/default"
 
-export default () => {
+export interface PromptItem {
+  desc: string
+  prompt: string
+}
+
+export type Setting = typeof defaultSetting
+
+export default function () {
   let inputRef: HTMLTextAreaElement
-  const [currentSystemRoleSettings, setCurrentSystemRoleSettings] = createSignal('')
-  const [systemRoleEditing, setSystemRoleEditing] = createSignal(false)
+  let containerRef: HTMLDivElement
   const [messageList, setMessageList] = createSignal<ChatMessage[]>([])
-  const [currentAssistantMessage, setCurrentAssistantMessage] = createSignal('')
+  const [currentAssistantMessage, setCurrentAssistantMessage] = createSignal("")
   const [loading, setLoading] = createSignal(false)
-  const [controller, setController] = createSignal<AbortController>(null)
+  const [controller, setController] = createSignal<AbortController>()
+  const [setting, setSetting] = createSignal(defaultSetting)
+  const [compatiblePrompt, setCompatiblePrompt] = createSignal<PromptItem[]>([])
+  const [containerWidth, setContainerWidth] = createSignal("init")
+  const fzf = new Fzf(prompts, { selector: k => `${k.desc} (${k.prompt})` })
 
-  const handleButtonClick = async () => {
-    const inputValue = inputRef.value
-    if (!inputValue) {
-      return
-    }
-    // @ts-ignore
-    if (window?.umami) umami.trackEvent('chat_generate')
-    inputRef.value = ''
-    setMessageList([
-      ...messageList(),
-      {
-        role: 'user',
-        content: inputValue,
-      },
-    ])
-    requestWithLatestMessage()
-  }
-  const throttle =_.throttle(function(){
-    window.scrollTo({top: document.body.scrollHeight, behavior: 'smooth'})
-  }, 300, {
-    leading: true,
-    trailing: false
-  })
-  const requestWithLatestMessage = async () => {
-    setLoading(true)
-    setCurrentAssistantMessage('')
+  onMount(() => {
+    createResizeObserver(containerRef, ({ width, height }, el) => {
+      if (el === containerRef) setContainerWidth(width + "px")
+    })
+    const storage = localStorage.getItem("setting")
+    const session = localStorage.getItem("session")
     try {
-      const controller = new AbortController()
-      setController(controller)
-      const requestMessageList = [...messageList()]
-      if (currentSystemRoleSettings()) {
-        requestMessageList.unshift({
-          role: 'system',
-          content: currentSystemRoleSettings(),
+      let archiveSession = false
+      if (storage) {
+        const parsed = JSON.parse(storage)
+        archiveSession = parsed.archiveSession
+        setSetting({
+          ...defaultSetting,
+          ...parsed
+          // continuousDialogue: false
         })
       }
-      const timestamp = Date.now()
-      const response = await fetch('/api/generate', {
-        method: 'POST',
-        body: JSON.stringify({
-          messages: requestMessageList,
-          time: timestamp,
-          sign: await generateSignature({
-            t: timestamp,
-            m: requestMessageList?.[requestMessageList.length - 1]?.content || '',
-          }),
-        }),
-        signal: controller.signal,
-      })
-      if (!response.ok) {
-        throw new Error(response.statusText)
+      if (session && archiveSession) {
+        setMessageList(JSON.parse(session))
       }
-      const data = response.body
-      if (!data) {
-        throw new Error('No data')
-      }
-      const reader = data.getReader()
-      const decoder = new TextDecoder('utf-8')
-      let done = false
-
-      while (!done) {
-        const { value, done: readerDone } = await reader.read()
-        if (value) {
-          let char = decoder.decode(value)
-          if (char === '\n' && currentAssistantMessage().endsWith('\n')) {
-            continue
-          }
-          if (char) {
-            setCurrentAssistantMessage(currentAssistantMessage() + char)
-          }
-          throttle()
-        }
-        done = readerDone
-      }
-    } catch (e) {
-      console.error(e)
-      setLoading(false)
-      setController(null)
-      return
+    } catch {
+      console.log("Setting parse error")
     }
-    archiveCurrentMessage()
-  }
+  })
 
-  const archiveCurrentMessage = () => {
+  createEffect(() => {
+    if (messageList().length === 0) {
+      setMessageList([
+        {
+          role: "assistant",
+          content: defaultMessage
+        }
+      ])
+    } else if (
+      messageList().length > 1 &&
+      messageList()[0].content === defaultMessage
+    ) {
+      setMessageList(messageList().slice(1))
+    }
+    localStorage.setItem("setting", JSON.stringify(setting()))
+    if (setting().archiveSession)
+      localStorage.setItem("session", JSON.stringify(messageList()))
+  })
+
+  function archiveCurrentMessage() {
     if (currentAssistantMessage()) {
       setMessageList([
         ...messageList(),
         {
-          role: 'assistant',
-          content: currentAssistantMessage(),
-        },
+          role: "assistant",
+          content: currentAssistantMessage()
+        }
       ])
-      setCurrentAssistantMessage('')
+      setCurrentAssistantMessage("")
       setLoading(false)
-      setController(null)
+      setController()
       inputRef.focus()
     }
   }
+  async function handleButtonClick(value?: string) {
+    const inputValue = value ?? inputRef.value
+    if (!inputValue) {
+      return
+    }
+    // @ts-ignore
+    if (window?.umami) umami.trackEvent("chat_generate")
+    inputRef.value = ""
+    setCompatiblePrompt([])
+    setHeight("3em")
+    if (
+      !value ||
+      value !==
+        messageList()
+          .filter(k => k.role === "user")
+          .at(-1)?.content
+    ) {
+      setMessageList([
+        ...messageList(),
+        {
+          role: "user",
+          content: inputValue
+        }
+      ])
+    }
+    try {
+      await fetchGPT(inputValue)
+    } catch (error) {
+      setCurrentAssistantMessage(
+        String(error).includes("The user aborted a request")
+          ? ""
+          : String(error)
+      )
+    }
+    archiveCurrentMessage()
+  }
+  async function fetchGPT(inputValue: string) {
+    setLoading(true)
+    const controller = new AbortController()
+    setController(controller)
+    const systemRule = setting().systemRule.trim()
+    const message = {
+      role: "user",
+      content: systemRule ? systemRule + "\n" + inputValue : inputValue
+    }
+    const response = await fetch("/api/stream", {
+      method: "POST",
+      body: JSON.stringify({
+        messages: setting().continuousDialogue
+          ? [...messageList().slice(0, -1), message]
+          : [message],
+        key: setting().openaiAPIKey,
+        temperature: setting().openaiAPITemperature / 100
+      }),
+      signal: controller.signal
+    })
+    if (!response.ok) {
+      throw new Error(response.statusText)
+    }
+    const data = response.body
+    if (!data) {
+      throw new Error("没有返回数据")
+    }
+    const reader = data.getReader()
+    const decoder = new TextDecoder("utf-8")
+    let done = false
 
-  const clear = () => {
-    inputRef.value = ''
-    inputRef.style.height = 'auto';
-    setMessageList([])
-    setCurrentAssistantMessage('')
-    setCurrentSystemRoleSettings('')
+    while (!done) {
+      const { value, done: readerDone } = await reader.read()
+      if (value) {
+        let char = decoder.decode(value)
+        if (char === "\n" && currentAssistantMessage().endsWith("\n")) {
+          continue
+        }
+        if (char) {
+          setCurrentAssistantMessage(currentAssistantMessage() + char)
+        }
+      }
+      done = readerDone
+    }
   }
 
-  const stopStreamFetch = () => {
+  function clear() {
+    inputRef.value = ""
+    setMessageList([])
+    setCurrentAssistantMessage("")
+    setCompatiblePrompt([])
+  }
+
+  function stopStreamFetch() {
     if (controller()) {
-      controller().abort()
+      controller()?.abort()
       archiveCurrentMessage()
     }
   }
 
-  const retryLastFetch = () => {
-    if (messageList().length > 0) {
-      const lastMessage = messageList()[messageList().length - 1]
-      console.log(lastMessage)
-      if (lastMessage.role === 'assistant') {
-        setMessageList(messageList().slice(0, -1))
-        requestWithLatestMessage()
-      }
-    }
+  function reAnswer() {
+    handleButtonClick(
+      messageList()
+        .filter(k => k.role === "user")
+        .at(-1)?.content
+    )
   }
 
-  const handleKeydown = (e: KeyboardEvent) => {
-    if (e.isComposing || e.shiftKey) {
-      return
-    }
-    if (e.key === 'Enter') {
-      handleButtonClick()
-    }
+  function selectPrompt(prompt: string) {
+    inputRef.value = prompt
+    // setHeight("3em")
+    setHeight(inputRef.scrollHeight + "px")
+    setCompatiblePrompt([])
   }
+
+  const [height, setHeight] = createSignal("3em")
 
   return (
-    <div my-6>
-      <SystemRoleSettings
-        canEdit={() => messageList().length === 0}
-        systemRoleEditing={systemRoleEditing}
-        setSystemRoleEditing={setSystemRoleEditing}
-        currentSystemRoleSettings={currentSystemRoleSettings}
-        setCurrentSystemRoleSettings={setCurrentSystemRoleSettings}
-      />
-      <Index each={messageList()}>
-        {(message, index) => (
-          <MessageItem
-            role={message().role}
-            message={message().content}
-            showRetry={() => (message().role === 'assistant' && index === messageList().length - 1)}
-            onRetry={retryLastFetch}
-          />
+    <div mt-6 ref={containerRef!}>
+      <For each={messageList()}>
+        {message => (
+          <MessageItem role={message.role} message={message.content} />
         )}
-      </Index>
+      </For>
       {currentAssistantMessage() && (
-        <MessageItem
-          role="assistant"
-          message={currentAssistantMessage}
-        />
+        <MessageItem role="assistant" message={currentAssistantMessage} />
       )}
-      <Show
-        when={!loading()}
-        fallback={() => (
-          <div class="h-12 my-4 flex gap-4 items-center justify-center bg-slate bg-op-15 text-slate rounded-sm">
-            <span>AI is thinking...</span>
-            <div class="px-2 py-0.5 border border-slate text-slate rounded-md text-sm op-70 cursor-pointer hover:bg-slate/10" onClick={stopStreamFetch}>Stop</div>
-          </div>
-        )}
+      <div
+        class="pb-6 fixed bottom-0 z-100 bg-#171921 op-0"
+        style={
+          containerWidth() === "init"
+            ? {}
+            : {
+                transition: "opacity 0.3s ease-in-out",
+                width: containerWidth(),
+                opacity: 100
+              }
+        }
       >
-        <div class="my-4 flex items-center gap-2 transition-opacity" class:op-50={systemRoleEditing()}>
-          <textarea
-            ref={inputRef!}
-            disabled={systemRoleEditing()}
-            onKeyDown={handleKeydown}
-            placeholder="Enter something..."
-            autocomplete="off"
-            autofocus
-            onInput={() => {
-              inputRef.style.height = 'auto';
-              inputRef.style.height = inputRef.scrollHeight + 'px';
-            }}
-            rows="1"
-            w-full
-            px-3 py-3
-            min-h-12
-            max-h-36
-            text-slate
-            rounded-sm
-            bg-slate
-            bg-op-15
-            resize-none
-            focus:bg-op-20
-            focus:ring-0
-            focus:outline-none
-            placeholder:text-slate-400
-            placeholder:op-30
-            scroll-pa-8px
+        <Show when={!compatiblePrompt().length}>
+          <Setting
+            setting={setting}
+            setSetting={setSetting}
+            clear={clear}
+            reAnswer={reAnswer}
           />
-          <button onClick={handleButtonClick} disabled={systemRoleEditing()} h-12 px-4 py-2 bg-slate bg-op-15 hover:bg-op-20 text-slate rounded-sm>
-            Send
-          </button>
-          <button title="Clear" onClick={clear} disabled={systemRoleEditing()} h-12 px-4 py-2 bg-slate bg-op-15 hover:bg-op-20 text-slate rounded-sm>
-            <IconClear />
-          </button>
-        </div>
-      </Show>
+        </Show>
+        <Show
+          when={!loading()}
+          fallback={() => (
+            <div class="h-12 flex items-center justify-center bg-slate bg-op-15 text-slate rounded">
+              <span>AI 正在思考...</span>
+              <div
+                class="ml-1em px-2 py-0.5 border border-slate text-slate rounded-md text-sm op-70 cursor-pointer hover:bg-slate/10"
+                onClick={stopStreamFetch}
+              >
+                不需要了
+              </div>
+            </div>
+          )}
+        >
+          <Show when={compatiblePrompt().length}>
+            <PromptList
+              prompts={compatiblePrompt()}
+              select={selectPrompt}
+            ></PromptList>
+          </Show>
+          <div class="flex items-end">
+            <textarea
+              ref={inputRef!}
+              id="input"
+              placeholder="与 ta 对话吧"
+              autocomplete="off"
+              autofocus
+              onKeyDown={e => {
+                if (compatiblePrompt().length) {
+                  if (
+                    e.key === "ArrowUp" ||
+                    e.key === "ArrowDown" ||
+                    e.key === "Enter"
+                  ) {
+                    e.preventDefault()
+                  }
+                } else if (e.key === "Enter") {
+                  if (!e.shiftKey && !e.isComposing) {
+                    handleButtonClick()
+                  }
+                }
+              }}
+              onInput={e => {
+                setHeight("3em")
+                setHeight(
+                  (e.currentTarget as HTMLTextAreaElement).scrollHeight + "px"
+                )
+                let { value } = e.currentTarget
+                if (value === "") return setCompatiblePrompt([])
+                if (value === "/") return setCompatiblePrompt(prompts)
+                const promptKey = value.replace(/^\/(.*)/, "$1")
+                if (promptKey !== value)
+                  setCompatiblePrompt(fzf.find(promptKey).map(k => k.item))
+              }}
+              style={{
+                height: height(),
+                "border-top-left-radius":
+                  compatiblePrompt().length === 0 ? "0.25rem" : 0
+              }}
+              class="self-end py-3 resize-none w-full px-3 text-slate bg-slate bg-op-15 focus:bg-op-20 focus:ring-0 focus:outline-none placeholder:text-slate-400 placeholder:op-30"
+              rounded-l
+            />
+            <div
+              class="flex text-slate bg-slate bg-op-15 h-3em items-center rounded-r"
+              style={{
+                "border-top-right-radius":
+                  compatiblePrompt().length === 0 ? "0.25rem" : 0
+              }}
+            >
+              <button
+                title="发送"
+                onClick={() => handleButtonClick()}
+                class="i-carbon:send-filled text-5 mx-3 hover:text-slate-2"
+              />
+            </div>
+          </div>
+        </Show>
+      </div>
     </div>
   )
 }

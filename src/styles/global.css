@@ -1,0 +1,29 @@
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+  /**/
+}
+::-webkit-scrollbar-track {
+  background: #404552;
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a2d37;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+html {
+  font-family: system-ui, sans-serif;
+  background-color: #171921;
+  color: #ffffff;
+}
+main {
+  max-width: 70ch;
+  margin: 0 auto;
+  padding: 8em 2em;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
