@@ -1,9 +1,9 @@
 import type { APIRoute } from 'astro'
 import { generatePayload, parseOpenAIStream } from '@/utils/openAI'
 import { verifySignature } from '@/utils/auth'
-// #vercel-disable-blocks
-import { fetch, ProxyAgent } from 'undici'
-// #vercel-end
+// // #vercel-disable-blocks
+// import { fetch, ProxyAgent } from 'undici'
+// // #vercel-end
 
 const apiKey = import.meta.env.OPENAI_API_KEY
 const httpsProxy = import.meta.env.HTTPS_PROXY
@@ -19,11 +19,11 @@ export const post: APIRoute = async (context) => {
     return new Response('Invalid signature')
   }
   const initOptions = generatePayload(apiKey, messages)
-  // #vercel-disable-blocks
-  if (httpsProxy) {
-    initOptions['dispatcher'] = new ProxyAgent(httpsProxy)
-  }
-  // #vercel-end
+  // // #vercel-disable-blocks
+  // if (httpsProxy) {
+  //   initOptions['dispatcher'] = new ProxyAgent(httpsProxy)
+  // }
+  // // #vercel-end
 
   // @ts-ignore
   const response = await fetch(`${baseUrl}/v1/chat/completions`, initOptions) as Response
